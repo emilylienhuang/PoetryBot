@@ -48,17 +48,44 @@ def genLexicon(file_path, lang):
 def genNGrams(text, num):
     return list(ngrams(text, num))
 
-def calculateProbabilities(grams):
-    gram_to_prob = {}
-    for g in grams:
-        gram_to_prob[g] = 1 + gram_to_prob.get(g,0)
-    for gram, prob in gram_to_prob.items():
-        gram_to_prob[gram] /= len(gram_to_prob.values())
-    return gram_to_prob
+def calculateBiGramProbabilities(bigrams):
+    bi_prob = {}
+    uni_count = collections.defaultdict(int)
+    bi_count = collections.defaultdict(int)
 
-def loadHeap(word, probs):
+    for bg in bigrams:
+        w1, _ = bg
+        uni_count[w1] += 1
+        bi_count[bg] += 1
+
+    for bg, count in bi_count.items():
+        w1, _ = bg
+        bi_prob[bg] = count / uni_count[w1]
+    return [bi_count, bi_prob]
+
+def calculateTriProbabilities(bigrams, trigrams):
+    bi_count, _ = calculateBiGramProbabilities(bigrams)
+    tri_prob = {}
+    tri_count = collections.defaultdict(int)
+    for tg in trigrams:
+        tri_count[tg] += 1
+
+    for tg, count in tri_count.items():
+        w1, w2, w3 = tg
+        tri_prob[tg] = tri_count[tg] / bi_count[(w1,w2)]
+    return tri_prob
+
+
+def loadHeapTri(pair, probs):
     heap = []
-    for g,p in probs.items():
+    for g, p in probs.items():
+        if (g[0], g[1]) == pair:
+            heapq.heappush(heap, (-p, g[2]))
+    return heap
+
+def loadHeapBi(word, probs):
+    heap = []
+    for g, p in probs.items():
         if g[0] == word:
             heapq.heappush(heap, (-p, g[1]))
     return heap
@@ -72,10 +99,12 @@ def writePoem(file_path, lang, stanzas, line_length):
     text = genLexicon(file_path, lang)
 
     #calculate the grams
-    grams = genNGrams(text, 2)
+    bigrams = genNGrams(text, 2)
+    trigrams = genNGrams(text, 3)
 
     # assign probabilities
-    probs = calculateProbabilities(grams)
+    _, probsBi = calculateBiGramProbabilities(bigrams)
+    probsTri = calculateTriProbabilities(bigrams, trigrams)
 
 
     poem = []
@@ -83,30 +112,39 @@ def writePoem(file_path, lang, stanzas, line_length):
         for _ in range(stanzas):
             phrase = []
             heap = []
-            for _ in range(line_length):
-                if phrase:
-                    heap = loadHeap(phrase[-1], probs)
-                if not phrase or not heap:
+            next_word = ""
+            for _ in range(random.randint(3, line_length)):
+                if len(phrase) >= 2:
+                    heap = loadHeapTri(phrase[-2:], probsTri)
+                elif len(phrase) == 1:
+                    heap = loadHeapBi(phrase[0], probsBi)
+                    _, next_word = heapq.heappop(heap)
+                    phrase.append(next_word)
+                    continue
+                else:
                     # if there is not a corresponding ngram or we are at the start of a new line
                     for _ in range(20):
                         heapq.heappush(heap, (-random.randint(0, 100)/100.0, random.choice(text)))
-                #alternate between least and most occurring
-                for _ in range(random.randint(1,3)):
-                    if heap:
-                        _, new_word = heapq.heappop(heap)
-                    else:
-                        break
-                phrase.append(new_word)
+                #choose randomly from most likely sentence continuations
+                seen = set(phrase)
+                if heap:
+                    _, next_word = heapq.heappop(heap)
+                else:
+                    # there was nothing on the heap, then there was no corresponding tri-gram or bi-gram to match the chosen word
+                    next_word = random.choice(text)
+                while heap and next_word in seen:
+                    _, next_word = heapq.heappop(heap)
+                phrase.append(next_word)
                 heap = []
             string = ' '.join(phrase[:-1]) + ' ' + phrase[-1] + ","
             poem.append(string)
         poem.append('')
-    return poem
+    return '\n'.join(poem)
 
 def formatPoem(poem, stanza):
         for line in poem:
             print(line)
-formatPoem(writePoem('./English/English200.txt', 'en_core_web_sm',  4, 4), 4)
+print(writePoem('./English/English200.txt', 'en_core_web_sm',  4, 6))
 #
 
 
