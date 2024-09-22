@@ -8,6 +8,7 @@ from nltk import ngrams
 from collections import defaultdict
 
 import re
+import itertools
 
 #load spacy english model
 # en : english
@@ -16,27 +17,27 @@ import re
 # sm : small size, light, less memory storage needed
 # need to manually download using python interpreter
 #spacy.cli.download("en_core_web_sm")
-
-# read in text base
+#spacy.cli.download("en_core_web_md")
+# read in text base using spacy to create a given lexicon
 def genLexicon(file_path, lang):
     nlp = spacy.load(lang)
     with open(file_path, 'r', encoding='utf-8') as file:
         text = file.read()
 
     # create lexicon
-    #remove the "start of and end of delimeters"
+    #remove the "start of and end of delimeters" as seen in text
     cleaned_txt = re.sub(r'<\|startoftext\|>|<\|endoftext\|>', '', text)
 
     #process the cleaned text through nlp pipline using spacy
     doc = nlp(cleaned_txt)
 
     lexicon = []
-    #do I want have repeated values in my lexicon
 
     #extract tokens to create the lexicon
     for token in doc:
         # remove punctuations, excess white spaces, words
         if not token.is_punct and not token.is_space and not token.is_stop and not token.is_digit:
+            # use all lowercase for easy probabality parsings later
             lexicon.append(token.lower_)
 
     return lexicon
@@ -44,10 +45,11 @@ def genLexicon(file_path, lang):
 #wrapper to create ngrams using the nltk library
 #text is a list of words
 # num is the n in ngram
-# outputs a generator that can be indexed
+# outputs a generator that can be indexed with tuples as keys
 def genNGrams(text, num):
     return list(ngrams(text, num))
 
+# calculate the bigram probabilities given a list of bi-grams in this case a generator
 def calculateBiGramProbabilities(bigrams):
     bi_prob = {}
     uni_count = collections.defaultdict(int)
@@ -71,11 +73,14 @@ def calculateTriProbabilities(bigrams, trigrams):
         tri_count[tg] += 1
 
     for tg, count in tri_count.items():
-        w1, w2, w3 = tg
+        w1, w2, _ = tg
         tri_prob[tg] = tri_count[tg] / bi_count[(w1,w2)]
     return tri_prob
 
-
+'''
+Given that we've see "pair" push the most likely next occurring word onto the heap with its 
+corresponding probabilitity
+'''
 def loadHeapTri(pair, probs):
     heap = []
     for g, p in probs.items():
@@ -83,6 +88,9 @@ def loadHeapTri(pair, probs):
             heapq.heappush(heap, (-p, g[2]))
     return heap
 
+'''
+Given that we've seen a word, what is the most likely subsequent word to follow pushed onto the heap
+'''
 def loadHeapBi(word, probs):
     heap = []
     for g, p in probs.items():
@@ -90,9 +98,9 @@ def loadHeapBi(word, probs):
             heapq.heappush(heap, (-p, g[1]))
     return heap
 '''
-logic: I choose one of the most likely occurring choices
-if no choice availbale, I choose a random word to get the ball rolling again
-I'm making nonsense... Make it make more sense with 3-grams?
+logic: I choose from the most likely to occur next words. 
+If I can't choose from that. ie. there is no choice for most likely to occur next, 
+I choose a random word from the corpus
 '''
 def writePoem(file_path, lang, stanzas, line_length):
     # create the body of text
@@ -106,45 +114,68 @@ def writePoem(file_path, lang, stanzas, line_length):
     _, probsBi = calculateBiGramProbabilities(bigrams)
     probsTri = calculateTriProbabilities(bigrams, trigrams)
 
-
     poem = []
     for _ in range(3):
+        # how many lines per stanza
         for _ in range(stanzas):
             phrase = []
             heap = []
             next_word = ""
+            # randomly choose how many words per line
             for _ in range(random.randint(3, line_length)):
                 if len(phrase) >= 2:
+                    # we are able to use the tri-gram probabilities
                     heap = loadHeapTri(phrase[-2:], probsTri)
                 elif len(phrase) == 1:
+                    # we will use bigram probabilities
                     heap = loadHeapBi(phrase[0], probsBi)
                     _, next_word = heapq.heappop(heap)
                     phrase.append(next_word)
                     continue
                 else:
-                    # if there is not a corresponding ngram or we are at the start of a new line
-                    for _ in range(20):
+                    # we'll make a random choice to start the new phrase
+                    for _ in range(10):
                         heapq.heappush(heap, (-random.randint(0, 100)/100.0, random.choice(text)))
-                #choose randomly from most likely sentence continuations
-                seen = set(phrase)
                 if heap:
                     _, next_word = heapq.heappop(heap)
                 else:
                     # there was nothing on the heap, then there was no corresponding tri-gram or bi-gram to match the chosen word
                     next_word = random.choice(text)
-                while heap and next_word in seen:
-                    _, next_word = heapq.heappop(heap)
+                # make our random selection from the heap given the at most top 10 most likely candidates
+                for _ in range(random.randint(0,10)):
+                    if heap:
+                        _, next_word = heapq.heappop(heap)
+                    else:
+                        break
                 phrase.append(next_word)
                 heap = []
+            phrase[0] = phrase[0][0].upper() + phrase[0][1:]
             string = ' '.join(phrase[:-1]) + ' ' + phrase[-1] + ","
             poem.append(string)
         poem.append('')
     return '\n'.join(poem)
 
-def formatPoem(poem, stanza):
-        for line in poem:
-            print(line)
-print(writePoem('./English/English200.txt', 'en_core_web_sm',  4, 6))
-#
 
 
+poem = writePoem('./English/English200.txt', 'en_core_web_sm',  4, 6)
+
+'''
+Here we are going to validate the poem by 
+'''
+def checkCoherence(lang, poem):
+    nlp = spacy.load(lang)
+
+    doc = nlp(poem)
+    gen1, gen2 = itertools.tee(doc.sents)
+
+    # move gen2 ahead by 1
+    next(gen2)
+
+    phrase_similarities = []
+    for prev_line, curr_line in zip(gen1, gen2):
+        phrase_similarities.append(prev_line.similarity(curr_line))
+
+    average_similarity = sum(phrase_similarities) / len(phrase_similarities)
+    return average_similarity
+
+print(checkCoherence('en_core_web_md', poem))
