@@ -9,6 +9,7 @@ from collections import defaultdict
 
 import re
 import itertools
+import textstat
 
 #load spacy english model
 # en : english
@@ -88,6 +89,7 @@ def loadHeapTri(pair, probs):
             heapq.heappush(heap, (-p, g[2]))
     return heap
 
+
 '''
 Given that we've seen a word, what is the most likely subsequent word to follow pushed onto the heap
 '''
@@ -115,6 +117,7 @@ def writePoem(file_path, lang, stanzas, line_length):
     probsTri = calculateTriProbabilities(bigrams, trigrams)
 
     poem = []
+    seen = set()
     for _ in range(3):
         # how many lines per stanza
         for _ in range(stanzas):
@@ -125,34 +128,54 @@ def writePoem(file_path, lang, stanzas, line_length):
             for _ in range(random.randint(3, line_length)):
                 if len(phrase) >= 2:
                     # we are able to use the tri-gram probabilities
-                    heap = loadHeapTri(phrase[-2:], probsTri)
+                    bigram = tuple(phrase[-2:])
+                    heap = loadHeapTri(bigram, probsTri)
                 elif len(phrase) == 1:
                     # we will use bigram probabilities
                     heap = loadHeapBi(phrase[0], probsBi)
-                    _, next_word = heapq.heappop(heap)
+                    if heap:
+                        _, next_word = heapq.heappop(heap)
+                    else:
+                        next_word = random.choice(text)
+                    seen.add(next_word)
                     phrase.append(next_word)
                     continue
                 else:
                     # we'll make a random choice to start the new phrase
-                    for _ in range(10):
-                        heapq.heappush(heap, (-random.randint(0, 100)/100.0, random.choice(text)))
-                if heap:
-                    _, next_word = heapq.heappop(heap)
-                else:
-                    # there was nothing on the heap, then there was no corresponding tri-gram or bi-gram to match the chosen word
-                    next_word = random.choice(text)
-                # make our random selection from the heap given the at most top 10 most likely candidates
-                for _ in range(random.randint(0,10)):
-                    if heap:
-                        _, next_word = heapq.heappop(heap)
+                    coin_flip = random.randint(0, 1)
+                    if len(poem) == 0 or not coin_flip:
+                        # if we are starting from scratch make a random choice
+                        for _ in range(10):
+                            heapq.heappush(heap, (-random.randint(0, 100)/100.0, random.choice(text)))
                     else:
-                        break
+                        # otherwise, choose a most likely candidate given what was in the previous phrase
+                        i = 0
+                        word = ''
+                        while seen and i < random.randint(1,10):
+                            word = seen.pop()
+                        heap = loadHeapBi(word, probsBi)
+
+                if not heap:
+                    # there was nothing on the heap, then there was no corresponding tri-gram or bi-gram to match the chosen word
+                    while next_word in seen:
+                        next_word = random.choice(text)
+                else:
+                    # make our random selection from the heap given the at most top 3 most likely candidates
+                    for _ in range(random.randint(1,10)):
+                        if heap:
+                            _, next_word = heapq.heappop(heap)
+                        else:
+                            break
+
+                seen.add(next_word)
                 phrase.append(next_word)
                 heap = []
+
             phrase[0] = phrase[0][0].upper() + phrase[0][1:]
             string = ' '.join(phrase[:-1]) + ' ' + phrase[-1] + ","
             poem.append(string)
         poem.append('')
+    poem[-2] = poem[-2][:-1] + "."
     return '\n'.join(poem)
 
 
@@ -160,12 +183,14 @@ def writePoem(file_path, lang, stanzas, line_length):
 poem = writePoem('./English/English200.txt', 'en_core_web_sm',  4, 6)
 
 '''
-Here we are going to validate the poem by 
+Here we are going to validate the poem by checking how much one phrase leading into another
+makes sense or is similar to the preceding phrase.
 '''
-def checkCoherence(lang, poem):
+def genCoherence(lang, poem):
     nlp = spacy.load(lang)
 
     doc = nlp(poem)
+    # take the phrases or "sents"
     gen1, gen2 = itertools.tee(doc.sents)
 
     # move gen2 ahead by 1
@@ -175,7 +200,24 @@ def checkCoherence(lang, poem):
     for prev_line, curr_line in zip(gen1, gen2):
         phrase_similarities.append(prev_line.similarity(curr_line))
 
-    average_similarity = sum(phrase_similarities) / len(phrase_similarities)
+    if phrase_similarities:
+        average_similarity = sum(phrase_similarities) / len(phrase_similarities)
+    else:
+        return 0
     return average_similarity
+print(poem)
+print(genCoherence('en_core_web_md', poem))
 
-print(checkCoherence('en_core_web_md', poem))
+
+'''
+Based on the Flesch reading ease metric, returns a score on the 0, 100 interval
+'''
+def genReadingEase(poem, lang):
+    textstat.set_lang(lang)
+    return textstat.flesch_reading_ease(poem)
+
+def genGradeLevel(poem, lang):
+    textstat.set_lang(lang)
+    return textstat.flesch_kincaid_grade(poem)
+print(genReadingEase(poem, "en"))
+print(genGradeLevel(poem, "en"))
