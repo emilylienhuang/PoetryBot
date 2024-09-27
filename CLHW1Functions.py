@@ -10,7 +10,6 @@ from collections import defaultdict
 import re
 import itertools
 import textstat
-from gensim.models import Word2Vec
 
 #load spacy english model
 # en : english
@@ -21,7 +20,14 @@ from gensim.models import Word2Vec
 #spacy.cli.download("en_core_web_sm")
 #spacy.cli.download("en_core_web_md")
 # read in text base using spacy to create a given lexicon
-
+'''
+genLexicon generates a lexicon for the given language.
+Inputs:
+file_path - the path to the corresponding corpus
+lang - the language parsing type used for the spacy model
+Outputs:
+text - a list of all words in the corpus in the ordering they appear
+'''
 def genLexicon(file_path, lang):
     nlp = spacy.load(lang)
     with open(file_path, 'r', encoding='utf-8') as file:
@@ -45,14 +51,25 @@ def genLexicon(file_path, lang):
 
     return [nlp, doc, lexicon]
 
-#wrapper to create ngrams using the nltk library
-#text is a list of words
-# num is the n in ngram
-# outputs a generator that can be indexed with tuples as keys
+
+'''
+genNGrams is a wrapper to create ngrams using the nltk library.
+Input: 
+text - list of text words
+num - n-gram number, unigram, bigram, or trigram 
+'''
 def genNGrams(text, num):
     return list(ngrams(text, num))
 
 # calculate the bigram probabilities given a list of bi-grams in this case a generator
+'''
+calculateBiGramProbabilities calculates the bigram probabilities given a list of bi-grams in this case a generator
+Input:
+bigrams - a generator list of bigrams
+Output:
+bi_count - the count of times two words appear together in a particular ordering
+bi_prob - the bigram probabilities of each two-word tuple
+'''
 def calculateBiGramProbabilities(bigrams):
     bi_prob = {}
     uni_count = collections.defaultdict(int)
@@ -68,6 +85,14 @@ def calculateBiGramProbabilities(bigrams):
         bi_prob[bg] = count / uni_count[w1]
     return [bi_count, bi_prob]
 
+'''
+calculateTriGramProbabilities calculates the tri-gram probabilities given a list of tri-grams in this case a generator
+Input:
+bigrams - a generator list of bigrams
+trigrams - a generator list of trigrams
+Output:
+tri_prob - the trigram probabilities of each three-word tuple
+'''
 def calculateTriProbabilities(bigrams, trigrams):
     bi_count, _ = calculateBiGramProbabilities(bigrams)
     tri_prob = {}
@@ -81,8 +106,12 @@ def calculateTriProbabilities(bigrams, trigrams):
     return tri_prob
 
 '''
-Given that we've see "pair" push the most likely next occurring word onto the heap with its 
-corresponding probabilitity
+loadHeapTri takes in two words and generates a heap of the word most likely to occur next
+Input:
+pair - a pair of two words that already have been seen in a particular order in the poem
+probs - the tri-gram probabilities from the original inpu text
+Output:
+heap - a max heap where the most likely to occur word is on top
 '''
 def loadHeapTri(pair, probs):
     heap = []
@@ -93,7 +122,12 @@ def loadHeapTri(pair, probs):
 
 
 '''
-Given that we've seen a word, what is the most likely subsequent word to follow pushed onto the heap
+loadHeapBi takes in an input word and generates a heap of the word most likely to occur next
+Input:
+word - the word that has already been seen first in the text
+probs - the bi-gram probabilities from the original input text
+Output:
+heap - a max heap where the most likely to occur word is on top
 '''
 def loadHeapBi(word, probs):
     heap = []
@@ -102,12 +136,27 @@ def loadHeapBi(word, probs):
             heapq.heappush(heap, (-p, g[1]))
     return heap
 '''
-Part of speech tagging used to choose a "theme" for the Poem given the nouns in the corpus.
+chooseTheme Randomly assigns a theme from the given nouns inside of the corpus.
+Part of speech tagging is used to choose a "theme" for the Poem given the nouns in the corpus.
+Input: 
+doc - the nlp tokens per word
+Output:
+a random choice from the nouns in the corpus.
 '''
 def chooseTheme(doc):
     topics = [token.text for token in doc if token.pos_ == 'NOUN']
     return random.choice(topics)
 
+'''
+chooseRandomRelatedWord takes in a theme and randomly chooses a word likely to occur next given the theme.
+Input:
+nlp - the pre-loaded natural language processing model using spacy
+text - the lest of words in particular ordering in the corpus as a list of strings
+theme - the original theme of the poem as a string input
+seen - a set of the words that have already occurred in the poem
+Output:
+a randomly selected word related to the theme and not already in the poem
+'''
 def chooseRandomRelatedWord(nlp, text, theme, seen):
     words = ' '.join(text)
     doc = nlp(words)
@@ -117,9 +166,12 @@ def chooseRandomRelatedWord(nlp, text, theme, seen):
         new_word = random.choice(doc)
     return new_word.text
 '''
-logic: I choose from the most likely to occur next words. 
-If I can't choose from that. ie. there is no choice for most likely to occur next, 
-I choose a random word from the corpus
+writePoem creates the poem given inputs
+Inputs:
+file_path - text string representing where to retrieve the corpus
+lang - a string representing the spacy language model to load
+stanzas - the count of how many stanzas are to be desired in the randomly generated poem
+line_length - an integer representing the maximum number of words in a line
 '''
 def writePoem(file_path, lang, stanzas, line_length):
     # create the body of text
@@ -173,12 +225,16 @@ def writePoem(file_path, lang, stanzas, line_length):
 theme, poem = writePoem('./English/English200.txt', 'en_core_web_md',  4, 6)
 
 '''
-Here we are going to validate the poem by checking how much one phrase leading into another
-makes sense or is similar to the preceding phrase.
+genCoherence checks if the poem is similar to its theme using the spacy library
+Inputs:
+theme - a string word representation of the poem's topic
+poem - a string representing the poem's entire content
+lang - the spacy language model to load
+Output:
+a "coherence" score referencing the similarity of the poem to its theme on a [0,1] interval
 '''
 def genCoherence(theme, poem, lang):
     nlp = spacy.load(lang)
-
     poem_words = nlp(poem)
     theme_token = nlp(theme)
     return theme_token.similarity(poem_words)
@@ -187,12 +243,27 @@ print(genCoherence(theme, poem, 'en_core_web_md'))
 
 
 '''
-Based on the Flesch reading ease metric, returns a score on the 0, 100 interval
+genReadingEase outputs a score based on the Flesch reading ease metric, returns a score on the 0, 100 interval.
+100 being completely easy to read, 0 being impossible to read.
+Input:
+poem - the string representing the entire poem
+lang - the text_stat language model to load
+Output:
+The Flesch reading ease metric.
 '''
 def genReadingEase(poem, lang):
     textstat.set_lang(lang)
     return textstat.flesch_reading_ease(poem)
 
+'''
+genGradeLevel outputs a numeric representation of the American school system's grade number 
+needed to understand a piece of input text.
+Input: 
+poem - the string representing the entire poem
+lang - the text_stat language model to load
+Output:
+the associated reading level of the piece
+'''
 def genGradeLevel(poem, lang):
     textstat.set_lang(lang)
     return textstat.flesch_kincaid_grade(poem)
