@@ -10,6 +10,7 @@ from collections import defaultdict
 import re
 import itertools
 import textstat
+from gensim.models import Word2Vec
 
 #load spacy english model
 # en : english
@@ -20,6 +21,7 @@ import textstat
 #spacy.cli.download("en_core_web_sm")
 #spacy.cli.download("en_core_web_md")
 # read in text base using spacy to create a given lexicon
+
 def genLexicon(file_path, lang):
     nlp = spacy.load(lang)
     with open(file_path, 'r', encoding='utf-8') as file:
@@ -41,7 +43,7 @@ def genLexicon(file_path, lang):
             # use all lowercase for easy probabality parsings later
             lexicon.append(token.lower_)
 
-    return lexicon
+    return [nlp, doc, lexicon]
 
 #wrapper to create ngrams using the nltk library
 #text is a list of words
@@ -100,13 +102,28 @@ def loadHeapBi(word, probs):
             heapq.heappush(heap, (-p, g[1]))
     return heap
 '''
+Part of speech tagging used to choose a "theme" for the Poem given the nouns in the corpus.
+'''
+def chooseTheme(doc):
+    topics = [token.text for token in doc if token.pos_ == 'NOUN']
+    return random.choice(topics)
+
+def chooseRandomRelatedWord(nlp, text, theme, seen):
+    words = ' '.join(text)
+    doc = nlp(words)
+    theme_token = nlp(theme)
+    new_word = random.choice(doc)
+    while new_word.similarity(theme_token) < 0.5 or new_word.text in seen:
+        new_word = random.choice(doc)
+    return new_word.text
+'''
 logic: I choose from the most likely to occur next words. 
 If I can't choose from that. ie. there is no choice for most likely to occur next, 
 I choose a random word from the corpus
 '''
 def writePoem(file_path, lang, stanzas, line_length):
     # create the body of text
-    text = genLexicon(file_path, lang)
+    nlp, doc, text = genLexicon(file_path, lang)
 
     #calculate the grams
     bigrams = genNGrams(text, 2)
@@ -118,12 +135,15 @@ def writePoem(file_path, lang, stanzas, line_length):
 
     poem = []
     seen = set()
+
+    theme = chooseTheme(doc)
+
     for _ in range(3):
         # how many lines per stanza
         for _ in range(stanzas):
             phrase = []
             heap = []
-            next_word = ""
+            next_word = chooseRandomRelatedWord(nlp, text, theme, seen)
             # randomly choose how many words per line
             for _ in range(random.randint(3, line_length)):
                 if len(phrase) >= 2:
@@ -133,39 +153,9 @@ def writePoem(file_path, lang, stanzas, line_length):
                 elif len(phrase) == 1:
                     # we will use bigram probabilities
                     heap = loadHeapBi(phrase[0], probsBi)
-                    if heap:
-                        _, next_word = heapq.heappop(heap)
-                    else:
-                        next_word = random.choice(text)
-                    seen.add(next_word)
-                    phrase.append(next_word)
-                    continue
-                else:
-                    # we'll make a random choice to start the new phrase
-                    coin_flip = random.randint(0, 1)
-                    if len(poem) == 0 or not coin_flip:
-                        # if we are starting from scratch make a random choice
-                        for _ in range(10):
-                            heapq.heappush(heap, (-random.randint(0, 100)/100.0, random.choice(text)))
-                    else:
-                        # otherwise, choose a most likely candidate given what was in the previous phrase
-                        i = 0
-                        word = ''
-                        while seen and i < random.randint(1,10):
-                            word = seen.pop()
-                        heap = loadHeapBi(word, probsBi)
 
-                if not heap:
-                    # there was nothing on the heap, then there was no corresponding tri-gram or bi-gram to match the chosen word
-                    while next_word in seen:
-                        next_word = random.choice(text)
-                else:
-                    # make our random selection from the heap given the at most top 3 most likely candidates
-                    for _ in range(random.randint(1,10)):
-                        if heap:
-                            _, next_word = heapq.heappop(heap)
-                        else:
-                            break
+                if heap:
+                    _, next_word = heapq.heappop(heap)
 
                 seen.add(next_word)
                 phrase.append(next_word)
@@ -176,37 +166,24 @@ def writePoem(file_path, lang, stanzas, line_length):
             poem.append(string)
         poem.append('')
     poem[-2] = poem[-2][:-1] + "."
-    return '\n'.join(poem)
+    return [theme, 'On ' + theme + '\n' + '\n'.join(poem)]
 
 
 
-poem = writePoem('./English/English200.txt', 'en_core_web_sm',  4, 6)
+theme, poem = writePoem('./English/English200.txt', 'en_core_web_md',  4, 6)
 
 '''
 Here we are going to validate the poem by checking how much one phrase leading into another
 makes sense or is similar to the preceding phrase.
 '''
-def genCoherence(lang, poem):
+def genCoherence(theme, poem, lang):
     nlp = spacy.load(lang)
 
-    doc = nlp(poem)
-    # take the phrases or "sents"
-    gen1, gen2 = itertools.tee(doc.sents)
-
-    # move gen2 ahead by 1
-    next(gen2)
-
-    phrase_similarities = []
-    for prev_line, curr_line in zip(gen1, gen2):
-        phrase_similarities.append(prev_line.similarity(curr_line))
-
-    if phrase_similarities:
-        average_similarity = sum(phrase_similarities) / len(phrase_similarities)
-    else:
-        return 0
-    return average_similarity
+    poem_words = nlp(poem)
+    theme_token = nlp(theme)
+    return theme_token.similarity(poem_words)
 print(poem)
-print(genCoherence('en_core_web_md', poem))
+print(genCoherence(theme, poem, 'en_core_web_md'))
 
 
 '''
