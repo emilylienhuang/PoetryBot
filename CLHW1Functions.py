@@ -18,7 +18,7 @@ import textstat
 # sm : small size, light, less memory storage needed
 # need to manually download using python interpreter
 #spacy.cli.download("en_core_web_sm")
-#spacy.cli.download("en_core_web_md")
+#spacy.cli.download("en_core_web_lg")
 # read in text base using spacy to create a given lexicon
 '''
 genLexicon generates a lexicon for the given language.
@@ -157,14 +157,20 @@ seen - a set of the words that have already occurred in the poem
 Output:
 a randomly selected word related to the theme and not already in the poem
 '''
-def chooseRandomRelatedWord(nlp, text, theme, seen):
-    words = ' '.join(text)
-    doc = nlp(words)
-    theme_token = nlp(theme)
-    new_word = random.choice(doc)
-    while new_word.similarity(theme_token) < 0.5 or new_word.text in seen:
-        new_word = random.choice(doc)
-    return new_word.text
+
+
+def genProbs(file_path, lang):
+    # create the body of text
+    nlp, doc, text = genLexicon(file_path, lang)
+
+    # calculate the grams
+    bigrams = genNGrams(text, 2)
+    trigrams = genNGrams(text, 3)
+
+    # assign probabilities
+    _, probsBi = calculateBiGramProbabilities(bigrams)
+    probsTri = calculateTriProbabilities(bigrams, trigrams)
+    return [probsBi, probsTri, nlp, doc, text]
 '''
 writePoem creates the poem given inputs
 Inputs:
@@ -173,7 +179,73 @@ lang - a string representing the spacy language model to load
 stanzas - the count of how many stanzas are to be desired in the randomly generated poem
 line_length - an integer representing the maximum number of words in a line
 '''
-def writePoem(file_path, lang, stanzas, line_length):
+
+def writePoem(probsBi, probsTri, nlp, doc, text, stanzas, line_length, model=True):
+
+    poem = []
+    seen = set()
+
+    theme = random.choice(text)
+    if model:
+        theme = chooseTheme(doc)
+
+    theme_token = nlp(theme)
+
+    filtered_tokens = []
+    if model:
+        filtered_tokens = [token for token in doc if token.is_alpha and token.similarity(theme_token) >= 0.5]
+
+
+    for _ in range(3):
+        # how many lines per stanza
+        for _ in range(stanzas):
+            phrase = []
+            heap = []
+            if filtered_tokens:
+                next_word = random.choice(filtered_tokens).text
+            else:
+                next_word = random.choice(text)
+            # randomly choose how many words per line
+            for _ in range(random.randint(3, line_length)):
+                if len(phrase) >= 2:
+                    # we are able to use the tri-gram probabilities
+                    bigram = tuple(phrase[-2:])
+                    heap = loadHeapTri(bigram, probsTri)
+                elif len(phrase) == 1:
+                    # we will use bigram probabilities
+                    heap = loadHeapBi(phrase[0], probsBi)
+
+                if heap:
+                    _, next_word = heapq.heappop(heap)
+
+                if next_word in seen:
+                    coin_flip = random.randint(0,1)
+                    if coin_flip and filtered_tokens:
+                        next_word = random.choice(filtered_tokens).text
+                    else:
+                        next_word = random.choice(text)
+
+                seen.add(next_word)
+                phrase.append(next_word)
+                heap = []
+
+            phrase[0] = phrase[0][0].upper() + phrase[0][1:]
+            string = ' '.join(phrase[:-1]) + ' ' + phrase[-1] + ","
+            poem.append(string)
+        poem.append('')
+    poem[-2] = poem[-2][:-1] + "."
+    print("Wrote Poem")
+    return [theme, theme + '\n' + '\n'.join(poem)]
+
+'''
+writePoem creates the poem given inputs
+Inputs:
+file_path - text string representing where to retrieve the corpus
+lang - a string representing the spacy language model to load
+stanzas - the count of how many stanzas are to be desired in the randomly generated poem
+line_length - an integer representing the maximum number of words in a line
+'''
+def writePoemXX(file_path, lang, stanzas, line_length):
     # create the body of text
     nlp, doc, text = genLexicon(file_path, lang)
 
@@ -188,14 +260,14 @@ def writePoem(file_path, lang, stanzas, line_length):
     poem = []
     seen = set()
 
-    theme = chooseTheme(doc)
+    theme = random.choice(text)
 
     for _ in range(3):
         # how many lines per stanza
         for _ in range(stanzas):
             phrase = []
             heap = []
-            next_word = chooseRandomRelatedWord(nlp, text, theme, seen)
+            next_word = random.choice(text)
             # randomly choose how many words per line
             for _ in range(random.randint(3, line_length)):
                 if len(phrase) >= 2:
@@ -209,6 +281,10 @@ def writePoem(file_path, lang, stanzas, line_length):
                 if heap:
                     _, next_word = heapq.heappop(heap)
 
+                while next_word in seen:
+                    next_word = random.choice(text)
+
+
                 seen.add(next_word)
                 phrase.append(next_word)
                 heap = []
@@ -218,11 +294,12 @@ def writePoem(file_path, lang, stanzas, line_length):
             poem.append(string)
         poem.append('')
     poem[-2] = poem[-2][:-1] + "."
-    return [theme, 'On ' + theme + '\n' + '\n'.join(poem)]
+    return [theme, theme + '\n' + '\n'.join(poem)]
 
+probsBi, probsTri, nlp, doc, text = genProbs('./English/English200.txt', 'en_core_web_sm')
 
-
-theme, poem = writePoem('./English/English200.txt', 'en_core_web_md',  4, 6)
+theme, poem = writePoem(probsBi, probsTri, nlp, doc, text, 4, 6, False)
+#print(poem)
 
 '''
 genCoherence checks if the poem is similar to its theme using the spacy library
@@ -238,8 +315,8 @@ def genCoherence(theme, poem, lang):
     poem_words = nlp(poem)
     theme_token = nlp(theme)
     return theme_token.similarity(poem_words)
-print(poem)
-print(genCoherence(theme, poem, 'en_core_web_md'))
+#print(poem)
+#print(genCoherence(theme, poem, 'en_core_web_md'))
 
 
 '''
@@ -268,4 +345,4 @@ def genGradeLevel(poem, lang):
     textstat.set_lang(lang)
     return textstat.flesch_kincaid_grade(poem)
 print(genReadingEase(poem, "en"))
-print(genGradeLevel(poem, "en"))
+#print(genGradeLevel(poem, "en"))
